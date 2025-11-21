@@ -747,7 +747,9 @@ impl Traits {
             let ll = line.unwrap();
             let mut words = ll.split_terminator('\t');
             let key = words.next().unwrap().to_string();
-            let values = words.map(|s| s.parse::<f64>().unwrap()).collect();
+            let values: Vec<f64> = words
+                .map(|s| s.parse::<f64>().unwrap_or(f64::NAN))
+                .collect();
             traits.push((key, values));
         }
 
