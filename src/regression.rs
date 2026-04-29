@@ -208,12 +208,12 @@ fn regression_2n(traits: &[f64], genotypes: &[f64]) -> RegResult {
     let mut sig_xx = 0.0;
     let mut sig_xy = 0.0;
 
-    let n_strains = traits.len();
-    let n = n_strains as f64;
+    let mut n = 0.0;
 
-    for ix in 0..traits.len() {
-        let temp_trait = traits[ix];
-        let temp_geno = genotypes[ix];
+    for (&temp_trait, &temp_geno) in traits.iter().zip(genotypes.iter()) {
+        if temp_trait.is_nan() {
+            continue;
+        }
 
         sig_y += temp_trait;
         sig_yy += temp_trait * temp_trait;
@@ -221,6 +221,15 @@ fn regression_2n(traits: &[f64], genotypes: &[f64]) -> RegResult {
 
         sig_x += temp_geno;
         sig_xx += temp_geno * temp_geno;
+        n += 1.0;
+    }
+
+    if n < 2.0 {
+        return RegResult {
+            lrs: 0.0,
+            additive: 0.0,
+            dominance: None,
+        };
     }
 
     let d = sig_xx - sig_x * sig_x / n;
@@ -313,13 +322,16 @@ fn regression_3n(
     let mut sig_cy = 0.0;
     let mut sig_xy = 0.0;
 
-    let n_strains = traits.len();
-    let n = n_strains as f64;
+    let mut n = 0.0;
 
-    for ix in 0..traits.len() {
-        let a = controls[ix];
-        let b = genotypes[ix];
-        let y = traits[ix];
+    for ((&y, &b), &a) in traits
+        .iter()
+        .zip(genotypes.iter())
+        .zip(controls.iter())
+    {
+        if y.is_nan() {
+            continue;
+        }
         sig_c += a;
         sig_x += b;
         sig_y += y;
@@ -329,6 +341,15 @@ fn regression_3n(
         sig_xc += a * b;
         sig_cy += y * a;
         sig_xy += y * b;
+        n += 1.0;
+    }
+
+    if n < 2.0 {
+        return RegResult {
+            lrs: 0.0,
+            additive: 0.0,
+            dominance: Some(0.0),
+        };
     }
 
     let temp0 = sig_xc * sig_xc - sig_cc * sig_xx;
@@ -463,3 +484,84 @@ fn regression_3n(
 }
 
 */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn regression_2n_with_all_valid_values() {
+        let traits = vec![1.0, 2.0, 3.0, 4.0];
+        let genotypes = vec![-1.0, -1.0, 1.0, 1.0];
+        let result = regression_2n(&traits, &genotypes);
+        assert!(result.lrs > 0.0, "LRS should be positive for correlated data");
+        assert!(result.additive > 0.0, "Additive should be positive");
+    }
+
+    #[test]
+    fn regression_2n_with_one_nan() {
+        let traits = vec![1.0, 2.0, f64::NAN, 4.0];
+        let genotypes = vec![-1.0, -1.0, 1.0, 1.0];
+        let result = regression_2n(&traits, &genotypes);
+        // Should compute using the 3 valid points, not crash
+        assert!(!result.lrs.is_nan(), "LRS should not be NaN");
+        assert!(!result.additive.is_nan(), "Additive should not be NaN");
+    }
+
+    #[test]
+    fn regression_2n_with_all_nan() {
+        let traits = vec![f64::NAN, f64::NAN, f64::NAN];
+        let genotypes = vec![-1.0, 0.0, 1.0];
+        let result = regression_2n(&traits, &genotypes);
+        assert_eq!(result.lrs, 0.0, "LRS should be 0 when all traits are NaN");
+        assert_eq!(result.additive, 0.0, "Additive should be 0 when all traits are NaN");
+    }
+
+    #[test]
+    fn regression_2n_with_only_one_valid() {
+        let traits = vec![f64::NAN, 2.0, f64::NAN];
+        let genotypes = vec![-1.0, 0.0, 1.0];
+        let result = regression_2n(&traits, &genotypes);
+        assert_eq!(result.lrs, 0.0, "LRS should be 0 when fewer than 2 valid points");
+        assert_eq!(result.additive, 0.0, "Additive should be 0 when fewer than 2 valid points");
+    }
+
+    #[test]
+    fn regression_2n_with_scattered_nans() {
+        // Simulate the real bug: NaN scattered throughout
+        let traits = vec![6.82, 6.73, f64::NAN, 6.83, f64::NAN, 6.96, 6.70, 6.77];
+        let genotypes = vec![-1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0];
+        let result = regression_2n(&traits, &genotypes);
+        assert!(result.lrs > 0.0, "LRS should be positive with valid data remaining");
+        assert!(!result.additive.is_nan(), "Additive should not be NaN");
+    }
+
+    #[test]
+    fn regression_3n_with_one_nan() {
+        let traits = vec![1.0, 2.0, f64::NAN, 4.0];
+        let genotypes = vec![-1.0, -1.0, 1.0, 1.0];
+        let controls = vec![0.0, 1.0, 0.0, 1.0];
+        let result = regression_3n(&traits, &genotypes, &controls, false);
+        assert!(!result.lrs.is_nan(), "LRS should not be NaN");
+        assert!(!result.additive.is_nan(), "Additive should not be NaN");
+    }
+
+    #[test]
+    fn regression_3n_with_all_nan() {
+        let traits = vec![f64::NAN, f64::NAN, f64::NAN];
+        let genotypes = vec![-1.0, 0.0, 1.0];
+        let controls = vec![0.0, 1.0, 0.0];
+        let result = regression_3n(&traits, &genotypes, &controls, false);
+        assert_eq!(result.lrs, 0.0, "LRS should be 0 when all traits are NaN");
+        assert_eq!(result.additive, 0.0, "Additive should be 0 when all traits are NaN");
+    }
+
+    #[test]
+    fn regression_3n_composite_with_nan() {
+        let traits = vec![1.0, f64::NAN, 3.0, 4.0];
+        let genotypes = vec![-1.0, -1.0, 1.0, 1.0];
+        let controls = vec![0.0, 1.0, 0.0, 1.0];
+        let result = regression_3n(&traits, &genotypes, &controls, true);
+        assert!(!result.lrs.is_nan(), "LRS should not be NaN in composite mode");
+    }
+}
