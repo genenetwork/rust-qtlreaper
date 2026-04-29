@@ -748,7 +748,15 @@ impl Traits {
             let mut words = ll.split_terminator('\t');
             let key = words.next().unwrap().to_string();
             let values: Vec<f64> = words
-                .map(|s| s.parse::<f64>().unwrap_or(f64::NAN))
+                .map(|s| {
+                    s.parse::<f64>().unwrap_or_else(|_| {
+                        eprintln!(
+                            "Warning: could not parse trait value '{}', treating as missing",
+                            s
+                        );
+                        f64::NAN
+                    })
+                })
                 .collect();
             traits.push((key, values));
         }
